@@ -22,6 +22,7 @@
     "verify": "npm run typecheck && npm run audit:seo && npm run audit:schema"
   },
   "dependencies": {
+    "@neondatabase/serverless": "^1.2.0",
     "marked": "^14.1.4",
     "next": "15.5.25",
     "react": "19.1.0",

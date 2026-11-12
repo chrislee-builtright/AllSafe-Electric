@@ -6,20 +6,24 @@ import { attributionKeys } from '@/lib/attribution';
 import { business } from '@/lib/business';
 import { services } from '@/lib/services';
 import { citySlugs } from '@/lib/cities';
+import { saveLead, recordDelivery, markOpsNotified } from '@/lib/leadStore';
+import { sendLeadAlert, sendOpsAlert, formatLead } from '@/lib/leadEmail';
 
 /**
  * Estimate form Server Action, planning/docs/07 §4.
  * No third-party iframe. Honeypot + timing check, NO CAPTCHA.
  *
- * Leads fan out to configured delivery destinations:
- *   1. email  → allsafehomeservices@gmail.com   (plural, see planning/CLAUDE.md §3)
- *   2. webhook → Housecall Pro (create customer)
- *   3. webhook → Built Right Digital lead log
- *   4. GA4 `generate_lead`. Fired client-side on the returned {ok:true}
+ * Delivery order (the lead is never lost to a failed email):
+ *   1. SAVE to Postgres (Neon) first. This is the system of record.
+ *   2. email  → Jud via Resend (LEAD_EMAIL_TO)
+ *   3. webhook → Housecall Pro (create customer), if configured
+ *   4. webhook → Built Right Digital lead log, if configured
+ *   5. If Jud's email fails, the Built-Right backstop address (LEAD_OPS_EMAIL) is told
+ *      immediately with the full lead, and /api/cron/lead-alerts retries every 5 minutes.
+ *   6. GA4 `generate_lead`. Fired client-side on the returned {ok:true}
  *
- * Confirm receipt only after at least one configured destination accepts the lead.
- * If all destinations fail or are unconfigured, retain the form values and offer
- * a phone fallback. There is no durable retry queue in this implementation.
+ * Confirm receipt once the lead is saved OR at least one destination accepted it.
+ * Only when nothing worked do we retain the form values and offer the phone fallback.
  */
 
 export interface EstimateState {
@@ -107,17 +111,52 @@ export async function submitEstimate(
     source: 'allsafe-website-estimate-form',
   };
 
-  const results = await Promise.allSettled([
-    sendEmail(lead),
+  // 1. System of record first.
+  let saved = false;
+  try {
+    saved = await saveLead(lead);
+  } catch (error) {
+    console.error(`[lead ${leadId}] database save failed`, error);
+  }
+
+  // 2-4. Fan out. allSettled so one slow/failed destination cannot block the others.
+  const [emailR, hcpR, brdR] = await Promise.allSettled([
+    sendLeadAlert(lead),
     postWebhook(process.env.HCP_LEAD_WEBHOOK_URL, lead, 'housecall-pro'),
     postWebhook(process.env.BRD_LEAD_LOG_WEBHOOK_URL, lead, 'brd-lead-log'),
   ]);
-  const delivered = results.some((result) => result.status === 'fulfilled' && result.value === true);
-  const failed = results.filter((result) => result.status === 'rejected').length;
+  const alertSent = emailR.status === 'fulfilled';
+  const alertError = emailR.status === 'rejected' ? String(emailR.reason?.message ?? emailR.reason) : undefined;
+  const webhook = (r: PromiseSettledResult<boolean>): 'sent' | 'failed' | 'skipped' =>
+    r.status === 'rejected' ? 'failed' : r.value ? 'sent' : 'skipped';
+  const hcp = webhook(hcpR);
+  const brd = webhook(brdR);
+  const delivered = saved || alertSent || hcp === 'sent' || brd === 'sent';
 
-  if (failed) {
-    console.error(`[lead ${leadId}] ${failed} destination(s) failed; delivered=${delivered}`);
+  if (saved) {
+    try {
+      await recordDelivery(leadId, { alertSent, alertError, hcp, brd });
+    } catch (error) {
+      console.error(`[lead ${leadId}] could not record delivery status`, error);
+    }
   }
+
+  // 5. Backstop: tell Built-Right right away if the owner email did not go out, or nothing was saved.
+  if (!alertSent || !saved) {
+    const reasons = [
+      !alertSent ? `Owner email to Jud FAILED: ${alertError}` : null,
+      !saved ? 'Database save FAILED (lead exists only in the destinations that accepted it)' : null,
+      `Housecall Pro: ${hcp}`,
+      `BRD lead log: ${brd}`,
+      saved ? 'The 5-minute retry job will keep trying to email Jud.' : 'No retry is possible without the database. Contact the customer manually.',
+    ].filter(Boolean);
+    const opsSent = await sendOpsAlert(
+      `Lead delivery problem: ${lead.service} (${lead.zip})`,
+      `${reasons.join('\n')}\n\n--- LEAD ---\n${formatLead(lead)}`
+    );
+    if (opsSent && saved) await markOpsNotified('leads', leadId).catch(() => undefined);
+  }
+
   if (!delivered) {
     console.error(`[lead ${leadId}] No delivery destination accepted the request.`);
     return {
@@ -161,32 +200,6 @@ function guessCity(zip: string): string | null {
   };
   const slug = m[zip];
   return slug && citySlugs.includes(slug) ? slug : null;
-}
-
-async function sendEmail(lead: Record<string, unknown>) {
-  const key = process.env.RESEND_API_KEY;
-  const to = process.env.LEAD_EMAIL_TO || business.email.leads;
-  const from = process.env.LEAD_EMAIL_FROM || business.email.public;
-  if (!key) {
-    console.info('[lead] RESEND_API_KEY not set, email not sent. Lead:', lead.leadId);
-    return false;
-  }
-  const lines = Object.entries(lead)
-    .map(([k, v]) => `${k}: ${v ?? ''}`)
-    .join('\n');
-  const res = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      from: `Allsafe Electric Website <${from}>`,
-      to: [to],
-      reply_to: String(lead.email),
-      subject: `New estimate request, ${lead.service} (${lead.zip})`,
-      text: lines,
-    }),
-  });
-  if (!res.ok) throw new Error(`email provider ${res.status}`);
-  return true;
 }
 
 async function postWebhook(url: string | undefined, lead: unknown, label: string) {

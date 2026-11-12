@@ -14,5 +14,8 @@
       "destination": "https://allsafehomeservice.com/:path*",
       "permanent": true
     }
+  ],
+  "crons": [
+    { "path": "/api/cron/lead-alerts", "schedule": "*/5 * * * *" }
   ]
 }
