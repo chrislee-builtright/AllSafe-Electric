@@ -16,6 +16,6 @@
     }
   ],
   "crons": [
-    { "path": "/api/cron/lead-alerts", "schedule": "*/5 * * * *" }
+    { "path": "/api/cron/lead-alerts/", "schedule": "*/5 * * * *" }
   ]
 }

@@ -9,7 +9,8 @@ export const dynamic = 'force-dynamic';
 /**
  * CallRail post-call webhook receiver: an independent path from CallRail's own
  * notification emails. Add this URL in CallRail > Settings > Integrations > Webhooks
- * (Post-Call): https://allsafehomeservice.com/api/callrail?token=<CALLRAIL_WEBHOOK_SECRET>
+ * (Post-Call): https://allsafehomeservice.com/api/callrail/?token=<CALLRAIL_WEBHOOK_SECRET>
+ * (trailing slash required: the site redirects without it)
  *
  * Every call is stored, then Jud is emailed. A failed email is retried by the cron.
  */
