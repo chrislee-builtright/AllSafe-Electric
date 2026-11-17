@@ -8,10 +8,13 @@ import { services } from '@/lib/services';
 import { citySlugs } from '@/lib/cities';
 import { saveLead, recordDelivery, markOpsNotified } from '@/lib/leadStore';
 import { sendLeadAlert, sendOpsAlert, formatLead } from '@/lib/leadEmail';
+import { RECAPTCHA_ACTIONS } from '@/lib/recaptcha-config';
+import { clientIp, looksLikeSpam, rateLimited, verifyRecaptcha } from '@/lib/formGuard';
 
 /**
  * Estimate form Server Action, planning/docs/07 §4.
- * No third-party iframe. Honeypot + timing check, NO CAPTCHA.
+ * No third-party iframe. Spam defenses: two honeypot fields, timing check, per-IP rate limit,
+ * content heuristics and Google reCAPTCHA v3 (lib/formGuard.ts).
  *
  * Delivery order (the lead is never lost to a failed email):
  *   1. SAVE to Postgres (Neon) first. This is the system of record.
@@ -63,10 +66,20 @@ export async function submitEstimate(
   };
 
   // Honeypot + timing check
-  if (get('company_website')) return { ok: true, leadId: 'ignored' }; // silent drop for bots
+  if (get('company_website') || get('website')) return { ok: true, leadId: 'ignored' }; // silent drop for bots
   const started = Number(get('form_started_at')) || 0;
   if (started && Date.now() - started < 2500) {
     return { ok: true, leadId: 'ignored' };
+  }
+
+  const hdrs = await headers();
+  const ip = clientIp(hdrs);
+  if (rateLimited(ip)) {
+    return {
+      ok: false,
+      values,
+      error: `Too many requests from your connection. Please call ${business.phone.display} or try again in a few minutes.`,
+    };
   }
 
   const fieldErrors: Record<string, string> = {};
@@ -83,6 +96,20 @@ export async function submitEstimate(
     return { ok: false, fieldErrors, values, error: 'Please fix the highlighted fields.' };
   }
 
+  if (looksLikeSpam(values as { name: string; email: string; message: string })) {
+    return { ok: true, leadId: 'ignored' }; // silent drop
+  }
+
+  const captcha = await verifyRecaptcha(String(formData.get('recaptcha_token') ?? '').slice(0, 4000), RECAPTCHA_ACTIONS.estimate, ip);
+  if (!captcha.ok) {
+    console.warn('[recaptcha] blocked estimate submission', { reason: captcha.reason, score: captcha.score });
+    return {
+      ok: false,
+      values,
+      error: `We could not verify this request automatically. Please try again, or call ${business.phone.display} to arrange your visit.`,
+    };
+  }
+
   const outOfArea = !zips.has(values.zip);
   const serviceMeta = services.find((s) => s.slug === values.service || s.navLabel === values.service);
   const photo = formData.get('photo');
@@ -92,7 +119,6 @@ export async function submitEstimate(
   const leadId = /^AS-[0-9a-f-]{36}$/i.test(submittedId) ? submittedId : `AS-${randomUUID()}`;
   const measurementConsent = get('measurement_consent') === 'granted';
   const attribution = Object.fromEntries(attributionKeys.map(key => [key, measurementConsent ? get(key) : '']));
-  const hdrs = await headers();
   const lead = {
     ...attribution,
     measurement_consent: measurementConsent ? 'granted' : 'denied',

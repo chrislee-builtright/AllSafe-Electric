@@ -1,6 +1,6 @@
 'use client';
 
-import { useActionState, useEffect, useRef, useState } from 'react';
+import { useActionState, useEffect, useRef, useState, startTransition } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { submitEstimate, type EstimateState } from '@/app/actions/submit-estimate';
@@ -8,6 +8,8 @@ import { services } from '@/lib/services';
 import { business } from '@/lib/business';
 import { track } from '@/lib/analytics';
 import { attributionKeys, captureAttribution, measurementChoice, type Attribution } from '@/lib/attribution';
+import { getRecaptchaToken, loadRecaptcha } from '@/lib/recaptcha-client';
+import { RECAPTCHA_ACTIONS } from '@/lib/recaptcha-config';
 import { CheckIcon } from './Icons';
 
 const initial: EstimateState = { ok: false };
@@ -36,6 +38,15 @@ export function EstimateForm({
   const [attribution, setAttribution] = useState<Attribution>({});
   const [measurementAllowed, setMeasurementAllowed] = useState(false);
   const reportedLead = useRef<string | undefined>(undefined);
+  const [verifying, setVerifying] = useState(false);
+
+  // reCAPTCHA v3 runs invisibly: fetch a fresh token at submit, then hand off to the server action.
+  const submitAction = async (fd: FormData) => {
+    setVerifying(true);
+    fd.set('recaptcha_token', await getRecaptchaToken(RECAPTCHA_ACTIONS.estimate));
+    setVerifying(false);
+    startTransition(() => formAction(fd));
+  };
 
   useEffect(() => {
     startedRef.current = Date.now();
@@ -98,6 +109,14 @@ export function EstimateForm({
         autoComplete="off"
         className="hidden"
         aria-hidden
+      />
+      <input
+        type="text"
+        name="website"
+        tabIndex={-1}
+        autoComplete="off"
+        aria-hidden
+        style={{ position: 'absolute', left: '-9999px', width: 1, height: 1, opacity: 0 }}
       />
       <input type="hidden" name="submission_id" value={submissionId} />
       <input type="hidden" name="measurement_consent" value={measurementAllowed ? 'granted' : 'denied'} />
@@ -162,10 +181,10 @@ export function EstimateForm({
   const submit = (
     <button
       type="submit"
-      disabled={pending}
+      disabled={pending || verifying}
       className={`btn btn-primary ${variant === 'row' ? 'h-[50px] w-full lg:w-auto' : 'w-full sm:w-auto'}`}
     >
-      {pending ? 'Sending…' : submitLabel}
+      {pending || verifying ? 'Sending…' : submitLabel}
     </button>
   );
 
@@ -175,7 +194,15 @@ export function EstimateForm({
       <Link href="/privacy-policy/" className="underline">
         privacy policy
       </Link>
-      .
+      . This site is protected by reCAPTCHA and the Google{' '}
+      <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer" className="underline">
+        Privacy Policy
+      </a>{' '}
+      and{' '}
+      <a href="https://policies.google.com/terms" target="_blank" rel="noopener noreferrer" className="underline">
+        Terms of Service
+      </a>{' '}
+      apply.
     </p>
   );
 
@@ -184,7 +211,8 @@ export function EstimateForm({
     return (
       <form
         id={formId}
-        action={formAction}
+        action={submitAction}
+        onFocus={() => void loadRecaptcha().catch(() => undefined)}
         noValidate
         onChange={() => {
           if (!touched) {
@@ -215,7 +243,8 @@ export function EstimateForm({
   return (
     <form
       id={formId}
-      action={formAction}
+      action={submitAction}
+        onFocus={() => void loadRecaptcha().catch(() => undefined)}
       className={compact ? 'mt-4 space-y-3.5' : 'mt-6 space-y-4'}
       noValidate
       onChange={() => {

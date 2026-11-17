@@ -46,13 +46,13 @@ const ContentSecurityPolicy = [
   // script (separate domain from callrail.com, same product). Same failure
   // mode as featurable.com above if left off this list: the script tag loads
   // but the browser silently blocks it, so calls never get tracked.
-  "script-src 'self' 'unsafe-inline' https://www.googletagmanager.com https://cdn.callrail.com https://*.callrail.com https://cdn.calltrk.com https://*.calltrk.com https://featurable.com https://*.featurable.com",
+  "script-src 'self' 'unsafe-inline' https://www.googletagmanager.com https://cdn.callrail.com https://*.callrail.com https://cdn.calltrk.com https://*.calltrk.com https://featurable.com https://*.featurable.com https://www.google.com/recaptcha/ https://www.gstatic.com/recaptcha/",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https://lh3.googleusercontent.com https://*.googleusercontent.com https://maps.gstatic.com https://maps.googleapis.com https://*.google-analytics.com https://www.googletagmanager.com https://featurable.com https://*.featurable.com",
   "font-src 'self' data:",
   // Featurable fetches the review payload from its own API at runtime.
-  "connect-src 'self' https://*.google-analytics.com https://*.analytics.google.com https://www.googletagmanager.com https://*.callrail.com https://*.calltrk.com https://places.googleapis.com https://featurable.com https://*.featurable.com",
-  'frame-src https://book.housecallpro.com https://www.google.com',
+  "connect-src 'self' https://*.google-analytics.com https://*.analytics.google.com https://www.googletagmanager.com https://*.callrail.com https://*.calltrk.com https://places.googleapis.com https://featurable.com https://*.featurable.com https://www.google.com/recaptcha/",
+  'frame-src https://book.housecallpro.com https://www.google.com https://www.google.com/recaptcha/',
   "media-src 'self'",
   "manifest-src 'self'",
   'upgrade-insecure-requests',

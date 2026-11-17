@@ -691,3 +691,8 @@
     color-scheme: light;
   }
 }
+
+/* reCAPTCHA v3 badge is hidden; the required Google notice sits beside each form's submit button. */
+.grecaptcha-badge {
+  visibility: hidden;
+}
