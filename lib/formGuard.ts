@@ -1,8 +1,10 @@
 import 'server-only';
+import { createHmac } from 'node:crypto';
+import { neon } from '@neondatabase/serverless';
 
 /**
  * Server-side spam defenses for public forms: reCAPTCHA v3 verification, per-IP rate limiting and
- * cheap content heuristics. Everything here is best-effort and never stores personal data.
+ * cheap content heuristics. Rate-limit records contain only a keyed hash, count and expiry.
  */
 
 const SITE_HOSTS = ['allsafehomeservice.com', 'www.allsafehomeservice.com', 'localhost'];
@@ -16,8 +18,8 @@ export async function verifyRecaptcha(
 ): Promise<CaptchaResult> {
   const secret = process.env.RECAPTCHA_SECRET_KEY;
   if (!secret) {
-    console.warn('[recaptcha] RECAPTCHA_SECRET_KEY is not set; skipping verification');
-    return { ok: true, skipped: true };
+    console.error('[recaptcha] RECAPTCHA_SECRET_KEY is not set');
+    return { ok: false, reason: 'verifier-unconfigured' };
   }
   if (!token) return { ok: false, reason: 'missing-token' };
 
@@ -42,32 +44,42 @@ export async function verifyRecaptcha(
     if (!data.success) return { ok: false, reason: (data['error-codes'] ?? ['rejected']).join(',') };
     if (data.action !== expectedAction) return { ok: false, reason: 'action-mismatch', score: data.score };
     const host = data.hostname ?? '';
-    if (host && !SITE_HOSTS.includes(host) && !host.endsWith('.vercel.app')) {
+    if (!host || (!SITE_HOSTS.includes(host) && host !== process.env.VERCEL_URL)) {
       return { ok: false, reason: 'hostname-mismatch', score: data.score };
     }
     const min = Number(process.env.RECAPTCHA_MIN_SCORE) || 0.5;
     if ((data.score ?? 0) < min) return { ok: false, reason: 'low-score', score: data.score };
     return { ok: true, score: data.score };
   } catch (error) {
-    // Google being unreachable must not cost a real customer; the honeypot, timing and rate limit still ran.
-    console.error('[recaptcha] verification unavailable, allowing request', error);
-    return { ok: true, skipped: true, reason: 'verifier-unreachable' };
+    console.error('[recaptcha] verification unavailable', error);
+    return { ok: false, reason: 'verifier-unreachable' };
   }
 }
 
-const hits = new Map<string, number[]>();
+let limiterSchema: Promise<unknown> | null = null;
 
-/** Sliding-window limiter, per server instance. Returns true when the caller is over the limit. */
-export function rateLimited(key: string | null, limit = 5, windowMs = 10 * 60 * 1000): boolean {
-  if (!key) return false;
-  const now = Date.now();
-  const recent = (hits.get(key) ?? []).filter((t) => now - t < windowMs);
-  recent.push(now);
-  hits.set(key, recent);
-  if (hits.size > 5000) {
-    for (const [k, v] of hits) if (!v.some((t) => now - t < windowMs)) hits.delete(k);
+/** Atomic limiter shared across serverless instances; expired buckets are removed on use. */
+export async function rateLimited(key: string | null, limit = 5, windowMs = 10 * 60 * 1000): Promise<boolean> {
+  const url = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+  const secret = process.env.RECAPTCHA_SECRET_KEY;
+  if (!key || !url || !secret) return true;
+  const db = neon(url);
+  const hash = createHmac('sha256', secret).update(key).digest('hex');
+  try {
+    limiterSchema ??= db`create table if not exists form_rate_limits (
+      key_hash text primary key, hits integer not null, expires_at timestamptz not null
+    )`.catch(error => { limiterSchema = null; throw error; });
+    await limiterSchema;
+    await db`delete from form_rate_limits where expires_at < now()`;
+    const rows = await db`insert into form_rate_limits (key_hash, hits, expires_at)
+      values (${hash}, 1, now() + ${windowMs} * interval '1 millisecond')
+      on conflict (key_hash) do update set hits = form_rate_limits.hits + 1
+      returning hits`;
+    return Number(rows[0].hits) > limit;
+  } catch (error) {
+    console.error('[form-guard] rate limiter unavailable', error);
+    return true;
   }
-  return recent.length > limit;
 }
 
 export function clientIp(h: Headers): string | null {

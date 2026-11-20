@@ -28,16 +28,21 @@ export function loadRecaptcha(): Promise<void> {
 
 /** Returns a fresh single-use token for `action`, or '' if reCAPTCHA is unavailable (blocked, offline). */
 export async function getRecaptchaToken(action: string): Promise<string> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
-    await loadRecaptcha();
-    const g = (window as unknown as { grecaptcha: Grecaptcha }).grecaptcha;
     return await Promise.race([
-      new Promise<string>((resolve, reject) =>
-        g.ready(() => g.execute(RECAPTCHA_SITE_KEY, { action }).then(resolve, reject))
-      ),
-      new Promise<string>((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000)),
+      (async () => {
+        await loadRecaptcha();
+        const g = (window as unknown as { grecaptcha: Grecaptcha }).grecaptcha;
+        return new Promise<string>((resolve, reject) =>
+          g.ready(() => g.execute(RECAPTCHA_SITE_KEY, { action }).then(resolve, reject))
+        );
+      })(),
+      new Promise<string>((_, reject) => { timeout = setTimeout(() => reject(new Error('timeout')), 8000); }),
     ]);
   } catch {
     return '';
+  } finally {
+    if (timeout) clearTimeout(timeout);
   }
 }

@@ -8,6 +8,8 @@ import { captureAttribution, measurementChoice, setMeasurementChoice } from '@/l
 /** CallRail is available by default; explicit opt-outs stop tracking. GA4 stays opt-in. */
 export function Analytics() {
   const ga = process.env.NEXT_PUBLIC_GA4_ID;
+  const ads = process.env.NEXT_PUBLIC_GOOGLE_ADS_ID;
+  const googleTag = ga || ads;
   const callrail = process.env.NEXT_PUBLIC_CALLRAIL_SWAP_SCRIPT;
   const [allowed, setAllowed] = useState(false);
   const [callTracking, setCallTracking] = useState(false);
@@ -39,16 +41,17 @@ export function Analytics() {
   }
 
   return <>
-    {allowed && ga && <>
+    {allowed && googleTag && <>
       <Script id="ga4-init" strategy="afterInteractive">{`
         window.dataLayer = window.dataLayer || [];
         window.gtag = function(){window.dataLayer.push(arguments);};
         gtag('consent', 'default', {ad_storage:'denied', analytics_storage:'denied', ad_user_data:'denied', ad_personalization:'denied'});
         gtag('consent', 'update', {ad_storage:'granted', analytics_storage:'granted', ad_user_data:'granted', ad_personalization:'denied'});
         gtag('js', new Date());
-        gtag('config', ${JSON.stringify(ga)}, {send_page_view:true});
+        ${ga ? `gtag('config', ${JSON.stringify(ga)}, {send_page_view:true});` : ''}
+        ${ads ? `gtag('config', ${JSON.stringify(ads)});` : ''}
       `}</Script>
-      <Script src={`https://www.googletagmanager.com/gtag/js?id=${ga}`} strategy="afterInteractive" />
+      <Script src={`https://www.googletagmanager.com/gtag/js?id=${googleTag}`} strategy="afterInteractive" />
     </>}
     {callTracking && callrail && <Script src={callrail} strategy="afterInteractive" />}
     <div className="border-t border-rule bg-white px-4 py-3 text-center text-tiny text-grey">

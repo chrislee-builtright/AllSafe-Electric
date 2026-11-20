@@ -74,7 +74,7 @@ export async function submitEstimate(
 
   const hdrs = await headers();
   const ip = clientIp(hdrs);
-  if (rateLimited(ip)) {
+  if (await rateLimited(ip)) {
     return {
       ok: false,
       values,
