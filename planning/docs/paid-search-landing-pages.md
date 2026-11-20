@@ -86,6 +86,17 @@ Each of these is in the page copy, sourced from the repo's own records (`CLAUDE.
 Left out on purpose because they are unverified: "BBB A+ Accredited" (in the site top bar and footer), free
 estimates, emergency or same-day availability, warranties, financing, discounts and any diagnostic fee amount.
 
+## Preview deployment
+
+Preview-only CLI deployment of this branch (production untouched):
+https://all-safe-electric-rhvyde3ug-brd5.vercel.app (behind Vercel authentication). Checked there: all five
+`/lp/` URLs return 200 with `noindex, follow, nocache`; `/lp/nope/` returns 404; `/electrical-services-parker-co/`
+308s directly to `/electrical-services/`; `/electrical-panel-services/` keeps its `index, follow` meta;
+`/sitemap-services.xml` has no `/lp/` entries. Every preview response also carries the existing
+`X-Robots-Tag: noindex, nofollow` safety header for non-production hosts; production does not send it.
+The preview environment has the CallRail swap script but no GA4/Ads IDs and no database URL, so preview form
+submissions are rejected by the rate limiter (fails closed) and never become leads.
+
 ## Not verified here (needs access or authorization)
 
 - No production or preview form submission was sent and no test call was placed. Accepted, rejected
