@@ -6,6 +6,7 @@ import { Footer } from '@/components/Footer';
 import { TopBar } from '@/components/TopBar';
 import { StickyBar } from '@/components/StickyBar';
 import { Analytics } from '@/components/Analytics';
+import { PaidChromeGate } from '@/components/paid/PaidChromeGate';
 import { Schema } from '@/components/Schema';
 import { businessNode, websiteNode } from '@/lib/schema';
 import { SITE_URL, business } from '@/lib/business';
@@ -66,11 +67,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         >
           Skip to content
         </a>
-        <TopBar />
-        <Header />
+        <PaidChromeGate>
+          <TopBar />
+          <Header />
+        </PaidChromeGate>
         <main id="main">{children}</main>
-        <Footer />
-        <StickyBar />
+        <PaidChromeGate>
+          <Footer />
+          <StickyBar />
+        </PaidChromeGate>
         <Schema nodes={[businessNode(), websiteNode()]} />
         <Analytics />
       </body>
