@@ -10,6 +10,7 @@ import { track } from '@/lib/analytics';
 import { attributionKeys, captureAttribution, measurementChoice, type Attribution } from '@/lib/attribution';
 import { getRecaptchaToken, loadRecaptcha } from '@/lib/recaptcha-client';
 import { RECAPTCHA_ACTIONS } from '@/lib/recaptcha-config';
+import { acceptedFormSnapshot, captureAcceptedForm } from '@/lib/callrail-form';
 import { CheckIcon } from './Icons';
 
 const initial: EstimateState = { ok: false };
@@ -39,9 +40,13 @@ export function EstimateForm({
   const [measurementAllowed, setMeasurementAllowed] = useState(false);
   const reportedLead = useRef<string | undefined>(undefined);
   const [verifying, setVerifying] = useState(false);
+  const submittedForm = useRef<HTMLFormElement | null>(null);
+  const capturedLead = useRef<string | undefined>(undefined);
+  const capturePromise = useRef<Promise<void>>(Promise.resolve());
 
   // reCAPTCHA v3 runs invisibly: fetch a fresh token at submit, then hand off to the server action.
   const submitAction = async (fd: FormData) => {
+    submittedForm.current = acceptedFormSnapshot(formId, fd);
     setVerifying(true);
     fd.set('recaptcha_token', await getRecaptchaToken(RECAPTCHA_ACTIONS.estimate));
     setVerifying(false);
@@ -62,6 +67,10 @@ export function EstimateForm({
 
   useEffect(() => {
     if (state.ok && state.leadId && state.leadId !== 'ignored') {
+      if (capturedLead.current !== state.leadId && submittedForm.current) {
+        capturedLead.current = state.leadId;
+        capturePromise.current = captureAcceptedForm(submittedForm.current, state.leadId);
+      }
       if (reportedLead.current !== state.leadId) {
       reportedLead.current = state.leadId;
       track.generateLead({
@@ -71,8 +80,11 @@ export function EstimateForm({
         urgency: state.values?.when,
       });
       }
-      const t = setTimeout(() => router.push('/thank-you/'), 1400);
-      return () => clearTimeout(t);
+      let cancelled = false;
+      const t = setTimeout(() => {
+        void capturePromise.current.then(() => { if (!cancelled) router.push('/thank-you/'); });
+      }, 1400);
+      return () => { cancelled = true; clearTimeout(t); };
     }
   }, [state, router]);
 
@@ -211,9 +223,9 @@ export function EstimateForm({
     return (
       <form
         id={formId}
+        data-cr-no-capture
         action={submitAction}
         onFocus={() => void loadRecaptcha().catch(() => undefined)}
-        noValidate
         onChange={() => {
           if (!touched) {
             setTouched(true);
@@ -243,10 +255,10 @@ export function EstimateForm({
   return (
     <form
       id={formId}
+      data-cr-no-capture
       action={submitAction}
         onFocus={() => void loadRecaptcha().catch(() => undefined)}
       className={compact ? 'mt-4 space-y-3.5' : 'mt-6 space-y-4'}
-      noValidate
       onChange={() => {
         if (!touched) {
           setTouched(true);
